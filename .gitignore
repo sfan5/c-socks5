@@ -1,0 +1,4 @@
+*~
+*.o
+/c-socks5
+/.vscode
