@@ -2,7 +2,9 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
 
+#include "config.h"
 #include "main.h"
 
 static void strip(char *buf);
@@ -14,6 +16,7 @@ static int read_config(FILE *f);
 int read_args(int argc, char *argv[])
 {
 	// defaults
+	const char *config_path = DEFAULT_CONFIG_PATH;
 	memset(&config, 0, sizeof(config));
 	config.hello_timeout = 5 * 1000;
 	config.connect_timeout = 15 * 1000;
@@ -28,15 +31,7 @@ int read_args(int argc, char *argv[])
 		if (!strcmp(s, "-h") || !strcmp(s, "--help")) {
 			return -2;
 		} else if (!strcmp(s, "-c") && argi < argc) {
-			// parse config file
-			FILE *f = fopen(argv[argi++], "r");
-			if (!f) {
-				perror("fopen");
-				return -1;
-			}
-			if (read_config(f) == -1)
-				return -1;
-			fclose(f);
+			config_path = argv[argi++];
 		} else if (!strcmp(s, "-b") && argi < argc) {
 			const char *arg = argv[argi++];
 			struct sockaddr_storage addr;
@@ -58,6 +53,23 @@ int read_args(int argc, char *argv[])
 				s[0] == '-' ? "switch" : "argument", s,
 				s[0] == '-' ? " (or argument missing)" : "");
 			return -2;
+		}
+	}
+
+	// parse config file
+	if (config_path && config_path[0]) {
+		FILE *f = fopen(config_path, "r");
+		if (!f) {
+			fprintf(stderr, "couldn't open config file \"%s\": %s\n",
+				config_path, strerror(errno));
+			// fatal only if custom config
+			if (strcmp(config_path, DEFAULT_CONFIG_PATH) != 0)
+				return -1;
+		}
+		if (f) {
+			if (read_config(f) == -1)
+				return -1;
+			fclose(f);
 		}
 	}
 

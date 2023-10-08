@@ -11,4 +11,4 @@ Building the thing: `make RELEASE=1`
 Running the thing:
 * `./c-socks5`
 * basic options see `--help`
-* config file for everything else, full documentation + examples in `socks5.conf`
+* config file for everything else, full documentation + examples in `c-socks5.conf`

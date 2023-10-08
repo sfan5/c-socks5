@@ -4,13 +4,14 @@ LIBS = -lcares
 
 ifneq ($(RELEASE),1)
 CFLAGS += -Og -g
-#CFLAGS += -fsanitize=address
+CFLAGS += -fsanitize=address
 else
 CFLAGS += -O2 -DNDEBUG
 endif
 
 BINDIR ?= /usr/bin
-CONFDIR ?= /etc
+# Note that this path is hardcoded in the source
+CONFDIR = /etc
 
 SRC = config.c dns.c forwarder.c async.c main.c
 OBJ = $(addsuffix .o, $(basename $(SRC)))
@@ -28,6 +29,6 @@ clean:
 
 install:
 	install -pD -m755 c-socks5 $(DESTDIR)$(BINDIR)/c-socks5
-	install -pD -m644 socks5.conf $(DESTDIR)$(CONFDIR)/socks5.conf
+	install -pD -m644 c-socks5.conf $(DESTDIR)$(CONFDIR)/c-socks5.conf
 
 .PHONY: clean

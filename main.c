@@ -148,10 +148,12 @@ static void usage(void)
 	printf("Options:\n");
 	static const struct { const char *l, *r; } opts[] = {
 		{"-c file", "Load configuration from specified file"},
+		{"", "By default " DEFAULT_CONFIG_PATH " is read, pass an empty"},
+		{"", "argument to disable this."},
 		{"-b addr:port", "Set address(es) to listen for incoming connections"},
-		{"", "Same semantics as 'bind' in config file"},
+		{"", "Same semantics as 'bind' in config file."},
 		{"--dns addr", "Set DNS server(s)"},
-		{"", "Same semantics as 'dns' in config file"},
+		{"", "Same semantics as 'dns' in config file."},
 		{NULL},
 	};
 	for(int i = 0; opts[i].l; i++)
