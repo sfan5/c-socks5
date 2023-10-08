@@ -63,18 +63,19 @@ int read_args(int argc, char *argv[])
 
 	// defaults (part 2)
 	if (!config.bind_listener) {
-		append_addr_list(&config.bind_listener, (struct sockaddr_storage*)
-			&(struct sockaddr_in) {
+		struct sockaddr_storage addr = {0};
+		memcpy(&addr, &(struct sockaddr_in) {
 			.sin_family = AF_INET,
 			.sin_addr = {INADDR_ANY},
 			.sin_port = htons(1080),
-		});
-		append_addr_list(&config.bind_listener, (struct sockaddr_storage*)
-			&(struct sockaddr_in6) {
+		}, sizeof(struct sockaddr_in));
+		append_addr_list(&config.bind_listener, &addr);
+		memcpy(&addr, &(struct sockaddr_in6) {
 			.sin6_family = AF_INET6,
 			.sin6_addr = IN6ADDR_ANY_INIT,
 			.sin6_port = htons(1080),
-		});
+		}, sizeof(struct sockaddr_in6));
+		append_addr_list(&config.bind_listener, &addr);
 	}
 
 	return 0;
