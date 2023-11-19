@@ -135,12 +135,14 @@ int as_poll(struct as_context *c, as_handler_fn handler)
 
 	// events from epoll
 	c->events_count = ret;
-	for (int n = 0; n < ret; n++) {
+	ret = 0;
+	for (int n = 0; n < c->events_count; n++) {
 		int ev = (c->events[n].events & EPOLLIN) ? AS_POLLIN : 0;
 		ev |= (c->events[n].events & EPOLLOUT) ? AS_POLLOUT : 0;
 		ev |= (c->events[n].events & EPOLLERR) ? AS_POLLERR : 0;
 		if (ev == 0)
 			continue;
+		ret++;
 
 		struct as_fdentry *e = (struct as_fdentry*) c->events[n].data.ptr;
 		handler(e->fd, ev, e->user);
