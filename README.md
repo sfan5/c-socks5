@@ -2,7 +2,10 @@ c-socks5
 ========
 **A small SOCKS5 proxy written in C**
 
-(preliminary readme)
+Notable features:
+* Happy Eyeballs (RFC 6555)
+* no UDP support
+* scalable async design
 
 Libs needed: [c-ares](https://c-ares.haxx.se/)
 
