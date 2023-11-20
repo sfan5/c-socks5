@@ -52,17 +52,21 @@ int forwarder_init(void)
 	if (!as_add_fd(ctx, wakeup_pipe[0], AS_POLLIN, 0, ""))
 		return -1;
 
-	// determine size of our receive buffer
+	// size our receive buffer optimally so that ideally
+	// everything can be handed right back to the kernel
 	receive_size = 0;
-	FILE *f = fopen("/proc/sys/net/core/wmem_default", "r");
-	if (f) {
-		char buf[32] = {0};
-		fread(buf, sizeof(buf) - 1, 1, f);
-		receive_size = strtoul(buf, NULL, 10);
-		fclose(f);
+	{
+		int sock = socket(AF_INET, SOCK_STREAM, 0);
+		if (sock != -1) {
+			int tmp = 0;
+			socklen_t optlen = sizeof(int);
+			if (getsockopt(sock, SOL_SOCKET, SO_SNDBUF, &tmp, &optlen) == 0 && tmp > 0)
+				receive_size = tmp;
+			close(sock);
+		}
 	}
 	if (!receive_size)
-		receive_size = 64 * sysconf(_SC_PAGESIZE);
+		receive_size = 8 * sysconf(_SC_PAGESIZE);
 	receive_buffer = calloc(1, receive_size);
 	if (!receive_buffer)
 		return -1;
