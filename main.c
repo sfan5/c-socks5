@@ -41,8 +41,6 @@
 #define HAPPY_EYEBALLS_RESOLUTION_DELAY 50
 #define HAPPY_EYEBALLS_CONN_ATTEMPT_DELAY 250
 
-#define DNS_REQUEST_TABLE_CHUNK 32
-
 // doesn't cost us anything to check so do it relatively often
 #define IPV6_CONNECTABLE_CACHE_TIME 30
 
@@ -74,18 +72,14 @@ struct proto_state {
 	int dns_overdue : 1;
 };
 
-struct request_table {
-	struct proto_state *table[DNS_REQUEST_TABLE_CHUNK];
-	struct request_table *next;
-};
-
 /**/
 
 struct config_struct config;
 
 static struct as_context *ctx;
 
-static struct request_table request_table;
+static void **request_table;
+static size_t request_table_size;
 
 static void usage(void);
 static int create_sockets(void);
@@ -428,52 +422,34 @@ static int start_connection_attempt(struct proto_state *user, const struct socka
 
 static int request_table_allocate(struct proto_state *user)
 {
-	struct request_table *cur = &request_table;
-	int offset = 0;
-
-	while (1) {
-		for (int i = 0; i < DNS_REQUEST_TABLE_CHUNK; i++) {
-			if (!cur->table[i]) {
-				cur->table[i] = user;
-				return offset + i;
-			}
+	for (size_t i = 0; i < request_table_size; i++) {
+		if (!request_table[i]) {
+			request_table[i] = user;
+			return i;
 		}
-
-		offset += DNS_REQUEST_TABLE_CHUNK;
-		if (!cur->next) {
-			cur->next = calloc(1, sizeof(struct request_table));
-			if (!cur->next)
-				abort();
-		}
-		cur = cur->next;
 	}
+	const size_t old_size = request_table_size;
+	request_table_size += 8;
+	request_table = reallocarray(request_table, request_table_size, sizeof(void*));
+	if (!request_table)
+		abort();
+	request_table[old_size] = user;
+	for (size_t i = old_size + 1; i < request_table_size; i++)
+		request_table[i] = NULL;
+	return old_size;
 }
 
 static struct proto_state *request_table_retrieve(int id)
 {
-	struct request_table *cur = &request_table;
 	assert(id >= 0);
-	while (id >= DNS_REQUEST_TABLE_CHUNK) {
-		id -= DNS_REQUEST_TABLE_CHUNK;
-		if (!cur->next)
-			return NULL;
-		cur = cur->next;
-	}
-	return cur->table[id];
+	return request_table[id];
 }
 
 static void request_table_unset(int id)
 {
-	struct request_table *cur = &request_table;
 	assert(id >= 0);
-	while (id >= DNS_REQUEST_TABLE_CHUNK) {
-		id -= DNS_REQUEST_TABLE_CHUNK;
-		if (!cur->next)
-			return assert(false);
-		cur = cur->next;
-	}
-	assert(cur->table[id]);
-	cur->table[id] = NULL;
+	assert(request_table[id]);
+	request_table[id] = NULL;
 }
 
 /******/
