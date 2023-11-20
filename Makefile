@@ -4,7 +4,7 @@ LIBS = -lcares
 
 ifneq ($(RELEASE),1)
 CFLAGS += -Og -g
-CFLAGS += -fsanitize=address
+CFLAGS += -D_FORTIFY_SOURCE=2 -fsanitize=address
 else
 CFLAGS += -O2 -DNDEBUG
 endif

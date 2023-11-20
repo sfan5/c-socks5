@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/select.h>
+#include <sys/poll.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -125,7 +125,7 @@ int dns_request(int request_id, const char *name, bool aaaa)
 		process_single, (void*)(intptr_t)request_id);
 
 	// make sure the dns thread isn't sleeping
-	write(wakeup_pipe[1], ".", 1);
+	(void)write(wakeup_pipe[1], ".", 1);
 
 	return 0;
 }
@@ -194,33 +194,53 @@ reply:
 
 static void *mainloop(void *unused)
 {
-	fd_set read_fds, write_fds;
+	struct pollfd fds[ARES_GETSOCK_MAXNUM + 1];
 	struct timeval tv, *tvp;
-	int nfds, r;
+	unsigned int nfds;
 
 	while (1) {
-		FD_ZERO(&read_fds);
-		FD_ZERO(&write_fds);
+		fds[0].fd = wakeup_pipe[0];
+		fds[0].events = POLLIN;
+		nfds = 1;
 		tvp = NULL;
 
-		nfds = ares_fds(channel, &read_fds, &write_fds);
-		if (nfds != 0)
-			tvp = ares_timeout(channel, NULL, &tv);
-		FD_SET(wakeup_pipe[0], &read_fds);
-		if (wakeup_pipe[0]+1 > nfds)
-			nfds = wakeup_pipe[0]+1;
+		{
+			ares_socket_t afds[ARES_GETSOCK_MAXNUM];
+			int mask = ares_getsock(channel, afds, ARES_GETSOCK_MAXNUM);
+			for (int i = 0; i < ARES_GETSOCK_MAXNUM; i++) {
+				fds[nfds].events = (ARES_GETSOCK_READABLE(mask, i) ? POLLIN : 0) |
+					(ARES_GETSOCK_WRITABLE(mask, i) ? POLLOUT : 0);
+				if (!fds[nfds].events)
+					break;
+				fds[nfds].fd = afds[i];
+				nfds++;
+			}
+		}
+		tvp = ares_timeout(channel, NULL, &tv);
 
-		r = select(nfds, &read_fds, &write_fds, NULL, tvp);
+		int r = poll(fds, nfds, tvp ?
+			(tvp->tv_sec * 1000 + tvp->tv_usec / 1000) : -1);
 		if (r == -1) {
-			perror("select");
+			perror("poll");
 			continue;
 		}
 
-		if (FD_ISSET(wakeup_pipe[0], &read_fds)) {
+		if (fds[0].revents) {
 			char unused[50];
-			read(wakeup_pipe[0], unused, sizeof(unused));
+			(void)read(wakeup_pipe[0], unused, sizeof(unused));
 		}
-		ares_process(channel, &read_fds, &write_fds);
+		bool any = false;
+		for (int i = 1; i < nfds; i++) {
+			bool read = !!(fds[i].revents & (POLLIN|POLLERR)),
+				write = !!(fds[i].revents & POLLOUT);
+			if (!read && !write)
+				continue;
+			ares_process_fd(channel, read ? fds[i].fd : ARES_SOCKET_BAD,
+				write ? fds[i].fd : ARES_SOCKET_BAD);
+			any = true;
+		}
+		if (!any)
+			ares_process_fd(channel, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
 	}
 
 	return NULL;
