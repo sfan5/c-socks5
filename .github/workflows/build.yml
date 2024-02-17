@@ -1,0 +1,53 @@
+name: build
+
+on:
+  push:
+    paths:
+      - '**.[ch]'
+      - '**/Makefile'
+      - '.github/workflows/**.yml'
+  pull_request:
+    paths:
+      - '**.[ch]'
+      - '**/Makefile'
+      - '.github/workflows/**.yml'
+
+jobs:
+  gcc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install gcc make git libc-ares-dev
+
+      - name: Build
+        run: |
+          make -j2
+        env:
+          CC: gcc
+
+      - name: Test
+        run: |
+          ./util/ci-test.sh
+
+
+  clang:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install clang make git libc-ares-dev
+
+      - name: Build
+        run: |
+          make -j2
+        env:
+          CC: clang
+
+      - name: Test
+        run: |
+          ./util/ci-test.sh
