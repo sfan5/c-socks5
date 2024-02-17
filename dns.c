@@ -20,12 +20,21 @@
 #include "main.h"
 #include "config.h"
 
+#if ARES_VERSION < 0x010701
+#error c-ares is too old
+#endif
+
+#ifndef ARES_OPT_EVENT_THREAD
+#define ARES_OPT_EVENT_THREAD 0
+#endif
+
 struct dns_result {
 	struct hostent *ent;
 	int request_id;
 };
 
 static ares_channel channel;
+static bool event_thread; // true = c-ares event thread, false = our own
 static int wakeup_pipe[2], result_pipe[2];
 
 static inline void ares_perror(const char *s, int r);
@@ -40,6 +49,16 @@ int dns_init(void)
 		return -1;
 	}
 
+	event_thread = false;
+#if ARES_VERSION >= 0x011a00
+	if (ares_threadsafety() == ARES_TRUE)
+		event_thread = true;
+#endif
+
+#ifndef NDEBUG
+	printf("running with c-ares %s (event_thread=%d)\n", ares_version(NULL), (int)event_thread);
+#endif
+
 	struct ares_options options = {0};
 	int optmask = ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS;
 	options.flags = ARES_FLAG_STAYOPEN;
@@ -49,6 +68,9 @@ int dns_init(void)
 		options.flags |= ARES_FLAG_NOSEARCH;
 		options.lookups = "b";
 		optmask |= ARES_OPT_LOOKUPS;
+	}
+	if (event_thread) {
+		optmask |= ARES_OPT_EVENT_THREAD;
 	}
 	r = ares_init_options(&channel, &options, optmask);
 	if (r != ARES_SUCCESS) {
@@ -88,22 +110,28 @@ int dns_init(void)
 		config.dns_server = NULL;
 	}
 
-	if (pipe(wakeup_pipe) == -1)
-		return -1;
+	if (event_thread) {
+		wakeup_pipe[0] = wakeup_pipe[1] = -1;
+	} else {
+		if (pipe(wakeup_pipe) == -1)
+			return -1;
+	}
 	if (pipe(result_pipe) == -1)
 		return -1;
 
-	// so we can check for new data in a while loop (see dns_read_response)
+	// make sure dns_read_response can't block
 	int flags = fcntl(result_pipe[0], F_GETFL, 0);
 	if (flags == -1 || fcntl(result_pipe[0], F_SETFL, flags | O_NONBLOCK) == -1) {
 		perror("fcntl");
 		return -1;
 	}
 
-	pthread_t t;
-	if (pthread_create(&t, NULL, mainloop, NULL) == -1)
-		return -1;
-	pthread_detach(t);
+	if (!event_thread) {
+		pthread_t t;
+		if (pthread_create(&t, NULL, mainloop, NULL) == -1)
+			return -1;
+		pthread_detach(t);
+	}
 	return 0;
 }
 
@@ -124,8 +152,10 @@ int dns_request(int request_id, const char *name, bool aaaa)
 	ares_gethostbyname(channel, name, aaaa ? AF_INET6 : AF_INET,
 		process_single, (void*)(intptr_t)request_id);
 
-	// make sure the dns thread isn't sleeping
-	(void)write(wakeup_pipe[1], ".", 1);
+	if (!event_thread) {
+		// make sure the dns thread isn't sleeping
+		(void)write(wakeup_pipe[1], ".", 1);
+	}
 
 	return 0;
 }
@@ -197,6 +227,9 @@ static void *mainloop(void *unused)
 	struct pollfd fds[ARES_GETSOCK_MAXNUM + 1];
 	struct timeval tv, *tvp;
 	unsigned int nfds;
+
+	if (event_thread)
+		abort();
 
 	while (1) {
 		fds[0].fd = wakeup_pipe[0];
