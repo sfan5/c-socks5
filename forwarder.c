@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -16,7 +17,9 @@
 #include "async.h"
 #include "main.h"
 
-#define NODELAY_TRIP_MAX 4
+// If we start seeing data chunks over this size assume that bulk transfer
+// is happening and disable NODELAY
+#define NODELAY_MIN_SIZE 512
 
 struct fwd_args {
 	int client_sock, remote_sock;
@@ -26,11 +29,9 @@ struct fwd_state {
 	struct fwd_state *other_state;
 	char *waiting_send; // buffer waiting to be sent to our socket
 	size_t waiting_send_size;
-	uint16_t maxseg; // TCP MSS for our socket
-	unsigned int
+	bool
 		has_timeout : 1, // is the timeout set on our state or the other?
-		nodelay_enabled : 1, // is nodelay enabled on the other socket? (that's where we send to)
-		nodelay_trip : 4;
+		nodelay_enabled : 1; // is nodelay enabled on the other socket? (that's where we send to)
 };
 
 static struct as_context *ctx;
@@ -102,29 +103,8 @@ static void wakeup_handler(int fd, int event)
 	const int opt = 1;
 	setsockopt(a.remote_sock, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(int));
 
-	// for NODELAY estimation determine the TCP MSS
-	int client_maxseg, remote_maxseg;
-	socklen_t optlen = sizeof(int);
-	int r = getsockopt(a.client_sock, IPPROTO_TCP, TCP_MAXSEG, &client_maxseg, &optlen);
-	if (r == -1) {
-		perror("getsockopt");
-		client_maxseg = 512;
-	}
-	optlen = sizeof(int);
-	r = getsockopt(a.remote_sock, IPPROTO_TCP, TCP_MAXSEG, &remote_maxseg, &optlen);
-	if (r == -1) {
-		perror("getsockopt");
-		remote_maxseg = 512;
-	}
-	// cap super high mtu since applications often don't send that fast, which breaks the heuristics
-	if (client_maxseg > 9000)
-		client_maxseg = 9000;
-	if (remote_maxseg > 9000)
-		remote_maxseg = 9000;
-
 	// create states for the two sockets
 	struct fwd_state new = {0};
-	new.maxseg = client_maxseg;
 	new.nodelay_enabled = 1;
 	new.has_timeout = 1;
 	void *new_state = as_add_fd(ctx, a.client_sock, AS_POLLIN, sizeof(new), &new);
@@ -136,7 +116,6 @@ static void wakeup_handler(int fd, int event)
 	as_set_timeout(ctx, new_state, config.idle_timeout * 1000);
 
 	new.other_state = new_state;
-	new.maxseg = remote_maxseg;
 	new.has_timeout = 0;
 	void *new_state2 = as_add_fd(ctx, a.remote_sock, AS_POLLIN, sizeof(new), &new);
 	if (!new_state2) {
@@ -198,7 +177,7 @@ static void socket_handler(int fd, int event, void *_user)
 
 	// incoming data: event == AS_POLLIN
 	int r = recv(fd, receive_buffer, receive_size, 0);
-	 if (r == 0) {
+	if (r == 0) {
 		// EOF
 		goto delete;
 	} else if (r < 0) {
@@ -208,25 +187,14 @@ static void socket_handler(int fd, int event, void *_user)
 
 	size_t send_size = r;
 
-	// estimate whether NODELAY should be enabled
-	{
-		const int s = user->nodelay_enabled ? 1 : -1;
-		int trip = user->nodelay_trip;
-		if (send_size < user->maxseg)
-			trip -= s;
-		else
-			trip += s * (send_size / user->maxseg);
-		if (trip >= NODELAY_TRIP_MAX) {
-			const int opt = user->nodelay_enabled ^ 1;
+	// decide whether NODELAY should be enabled
+	if (send_size >= NODELAY_MIN_SIZE && user->nodelay_enabled) {
 #ifndef NDEBUG
-			printf("(%d -> %d) nodelay = %d\n", fd, other_fd, opt);
+		printf("(%d -> %d) nodelay off\n", fd, other_fd);
 #endif
-			setsockopt(other_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(int));
-			user->nodelay_enabled = opt;
-			user->nodelay_trip = 0;
-		} else {
-			user->nodelay_trip = trip < 0 ? 0 : trip;
-		}
+		int opt = 0;
+		setsockopt(other_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(int));
+		user->nodelay_enabled = false;
 	}
 
 	size_t delivered_size;
